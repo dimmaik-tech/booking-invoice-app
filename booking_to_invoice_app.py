@@ -11,6 +11,10 @@ import streamlit as st
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import NameObject, BooleanObject, DictionaryObject, ArrayObject
+from reportlab.pdfgen import canvas
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.lib import colors
 
 try:
     from openai import OpenAI
@@ -437,83 +441,184 @@ def remove_pdf_javascript_and_actions(obj, seen=None):
 
 
 def fill_pdf(template_path, field_values):
+    """
+    Stable PDF output: δεν γεμίζει τα AcroForm fields με pypdf.
+    Αντίθετα, γράφει τα στοιχεία σαν κανονικό κείμενο πάνω στο template με DejaVu font
+    και αφαιρεί τα fillable fields από το τελικό PDF.
+
+    Έτσι αποφεύγουμε τα χαλασμένα ελληνικά / σύμβολα στα form fields.
+    Το τελικό PDF είναι σταθερό για αποστολή/εκτύπωση, αλλά δεν είναι fillable.
+    """
     reader = PdfReader(str(template_path))
     writer = PdfWriter()
 
-    for page in reader.pages:
-        writer.add_page(page)
-
-    # Κρατάμε τη φόρμα, αλλά αφαιρούμε όλα τα παλιά JavaScript/actions του PDF template.
-    if "/AcroForm" in reader.trailer["/Root"]:
-        acroform = reader.trailer["/Root"]["/AcroForm"]
-
-        try:
-            acroform_obj = acroform.get_object()
-        except Exception:
-            acroform_obj = acroform
-
-        # Αφαίρεση calculation order
-        try:
-            if "/CO" in acroform_obj:
-                del acroform_obj[NameObject("/CO")]
-        except Exception:
-            pass
-
-        # Αφαίρεση actions από όλα τα πεδία, ακόμα και nested Kids
-        remove_pdf_javascript_and_actions(acroform_obj)
-
-        writer._root_object.update({NameObject("/AcroForm"): acroform})
-        writer.set_need_appearances_writer(True)
-
-        try:
-            writer._root_object[NameObject("/AcroForm")][NameObject("/NeedAppearances")] = BooleanObject(True)
-        except Exception:
-            pass
-
-    # Αφαίρεση document-level OpenAction και JavaScript Names
+    # Register Greek-safe font
+    font_regular = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    font_bold = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     try:
-        if "/OpenAction" in writer._root_object:
-            del writer._root_object[NameObject("/OpenAction")]
+        pdfmetrics.registerFont(TTFont("DejaVu", font_regular))
+    except Exception:
+        pass
+    try:
+        pdfmetrics.registerFont(TTFont("DejaVu-Bold", font_bold))
     except Exception:
         pass
 
-    try:
-        if "/Names" in writer._root_object:
-            names_obj = writer._root_object["/Names"]
-            if hasattr(names_obj, "get_object"):
-                names_obj = names_obj.get_object()
-            if "/JavaScript" in names_obj:
-                del names_obj[NameObject("/JavaScript")]
-    except Exception:
-        pass
+    def get_field_rects(page):
+        rects = {}
+        annots = page.get("/Annots", [])
+        for annot_ref in annots:
+            try:
+                annot = annot_ref.get_object()
+                if annot.get("/Subtype") != "/Widget":
+                    continue
 
-    # Αφαίρεση actions από annotations/widgets σε κάθε σελίδα
-    for page in writer.pages:
+                name = annot.get("/T")
+                if not name and annot.get("/Parent"):
+                    parent = annot.get("/Parent").get_object()
+                    name = parent.get("/T")
+
+                if not name or "/Rect" not in annot:
+                    continue
+
+                rect = [float(x) for x in annot["/Rect"]]
+                rects[str(name)] = rect
+            except Exception:
+                continue
+        return rects
+
+    def draw_fit_text(c, x, y, w, h, text, size=7.0, bold=False, center=False, color=colors.black):
+        text = "" if text is None else str(text)
+        font = "DejaVu-Bold" if bold else "DejaVu"
+
+        # Reduce font size until it fits the field width
+        fs = float(size)
+        max_width = max(w - 4, 5)
         try:
-            if "/Annots" in page:
-                for annot_ref in page["/Annots"]:
-                    annot = annot_ref.get_object()
-                    for key in ["/AA", "/A", "/JS", "/JavaScript"]:
-                        if key in annot:
-                            del annot[NameObject(key)]
+            while fs > 4.2 and pdfmetrics.stringWidth(text, font, fs) > max_width:
+                fs -= 0.25
         except Exception:
             pass
 
-    # Συμπλήρωση πεδίων από Python
-    for page in writer.pages:
-        writer.update_page_form_field_values(
-            page,
-            field_values,
-            auto_regenerate=False,
-        )
+        c.setFont(font, fs)
+        c.setFillColor(color)
+        text_y = y + (h - fs) / 2 + 1
+        if center:
+            c.drawCentredString(x + w / 2, text_y, text)
+        else:
+            c.drawString(x + 2, text_y, text)
 
-    # Ξανά αφαίρεση actions μετά τη συμπλήρωση, για σιγουριά
-    remove_pdf_javascript_and_actions(writer._root_object)
+    def field_style(name):
+        yellow_fields = {
+            "amount_in_words",
+            "net_amount",
+            "stamp_duty",
+            "vat_amount",
+            "total_amount",
+            "payable_amount",
+        }
+        item_fields = [
+            "item1_desc", "item1_qty", "item1_unit", "item1_amount",
+            "item2_desc", "item2_qty", "item2_unit", "item2_amount",
+            "item3_desc", "item3_qty", "item3_unit", "item3_amount",
+            "item4_desc", "item4_qty", "item4_unit", "item4_amount",
+            "item5_desc", "item5_qty", "item5_unit", "item5_amount",
+        ]
+        if name in yellow_fields:
+            return colors.HexColor("#FFFBE6")
+        if name in item_fields:
+            return colors.HexColor("#E8ECF8")
+        return colors.HexColor("#D7E1FF")
+
+    center_fields = {
+        "series", "document_number", "document_date",
+        "item1_desc", "item1_qty", "item1_unit", "item1_amount",
+        "item2_desc", "item2_qty", "item2_unit", "item2_amount",
+        "item3_desc", "item3_qty", "item3_unit", "item3_amount",
+        "item4_desc", "item4_qty", "item4_unit", "item4_amount",
+        "item5_desc", "item5_qty", "item5_unit", "item5_amount",
+        "net_amount", "stamp_rate", "stamp_duty", "vat_rate", "vat_amount",
+        "total_amount", "payable_amount",
+    }
+
+    bold_fields = {
+        "business_name",
+        "item1_desc", "item1_qty", "item1_unit", "item1_amount",
+        "net_amount", "stamp_duty", "vat_amount", "total_amount", "payable_amount",
+    }
+
+    for page_index, page in enumerate(reader.pages):
+        page_width = float(page.mediabox.width)
+        page_height = float(page.mediabox.height)
+        rects = get_field_rects(page)
+
+        overlay_buffer = io.BytesIO()
+        c = canvas.Canvas(overlay_buffer, pagesize=(page_width, page_height))
+
+        for name, rect in rects.items():
+            x1, y1, x2, y2 = rect
+            x = min(x1, x2)
+            y = min(y1, y2)
+            w = abs(x2 - x1)
+            h = abs(y2 - y1)
+
+            value = field_values.get(name, "")
+
+            # Cover the original widget appearance and redraw stable field background
+            c.setFillColor(field_style(name))
+            c.setStrokeColor(colors.HexColor("#8FA9C3"))
+            c.setLineWidth(0.5)
+            c.rect(x, y, w, h, fill=1, stroke=1)
+
+            if name == "amount_in_words":
+                draw_fit_text(c, x, y, w, h, value, size=6.2, bold=False, center=False, color=colors.black)
+            elif name == "business_name":
+                draw_fit_text(c, x, y, w, h, value, size=15, bold=True, center=False, color=colors.black)
+            elif name == "payment_method":
+                draw_fit_text(c, x, y, w, h, value, size=6.0, bold=False, center=False, color=colors.black)
+            elif name in {"booking_ref", "notes"}:
+                draw_fit_text(c, x, y, w, h, value, size=6.0, bold=False, center=False, color=colors.black)
+            else:
+                draw_fit_text(
+                    c,
+                    x,
+                    y,
+                    w,
+                    h,
+                    value,
+                    size=8.0,
+                    bold=name in bold_fields,
+                    center=name in center_fields,
+                    color=colors.black,
+                )
+
+        c.save()
+        overlay_buffer.seek(0)
+        overlay_pdf = PdfReader(overlay_buffer)
+
+        # Merge stable text overlay on top of template
+        base_page = page
+        base_page.merge_page(overlay_pdf.pages[0])
+
+        # Remove interactive form widgets from final PDF to avoid browser/Acrobat font bugs
+        try:
+            if "/Annots" in base_page:
+                del base_page[NameObject("/Annots")]
+        except Exception:
+            pass
+
+        writer.add_page(base_page)
+
+    # Do not copy AcroForm; final PDF is flattened/stable
+    try:
+        if "/AcroForm" in writer._root_object:
+            del writer._root_object[NameObject("/AcroForm")]
+    except Exception:
+        pass
 
     out = io.BytesIO()
     writer.write(out)
     out.seek(0)
-
     return out
 
 

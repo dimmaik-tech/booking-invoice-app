@@ -452,17 +452,41 @@ def fill_pdf(template_path, field_values):
     reader = PdfReader(str(template_path))
     writer = PdfWriter()
 
-    # Register Greek-safe font
-    font_regular = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-    font_bold = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-    try:
-        pdfmetrics.registerFont(TTFont("DejaVu", font_regular))
-    except Exception:
-        pass
-    try:
-        pdfmetrics.registerFont(TTFont("DejaVu-Bold", font_bold))
-    except Exception:
-        pass
+    # Register Greek-safe font with fallback
+def register_font_safe(font_name, possible_paths, fallback_name):
+    for path in possible_paths:
+        try:
+            if Path(path).exists():
+                pdfmetrics.registerFont(TTFont(font_name, path))
+                return font_name
+        except Exception:
+            pass
+    return fallback_name
+
+
+PDF_FONT_REGULAR = register_font_safe(
+    "DejaVu",
+    [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+        "/usr/local/share/fonts/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    ],
+    "Helvetica",
+)
+
+PDF_FONT_BOLD = register_font_safe(
+    "DejaVu-Bold",
+    [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/local/share/fonts/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+    ],
+    PDF_FONT_REGULAR,
+)
 
     def get_field_rects(page):
         rects = {}

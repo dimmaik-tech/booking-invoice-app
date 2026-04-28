@@ -266,6 +266,60 @@ def amount_words_gr(amount):
     return text[:1].upper() + text[1:]
 
 
+def amount_words_en(amount):
+    """English amount in words for invoices."""
+    amount = float(amount or 0)
+    cents = int(round(abs(amount) * 100)) % 100
+    euros = int(math.floor(abs(amount)))
+
+    ones = [
+        "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+        "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+        "seventeen", "eighteen", "nineteen",
+    ]
+    tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+
+    def under_1000_en(n):
+        n = int(n)
+        parts = []
+        h, r = divmod(n, 100)
+        if h:
+            parts.append(ones[h] + " hundred")
+        if r:
+            if r < 20:
+                parts.append(ones[r])
+            else:
+                t, u = divmod(r, 10)
+                parts.append(tens[t] + (("-" + ones[u]) if u else ""))
+        return " ".join(parts)
+
+    def int_words_en(n):
+        n = int(abs(n))
+        if n == 0:
+            return "zero"
+        parts = []
+        millions, n = divmod(n, 1_000_000)
+        thousands, rest = divmod(n, 1000)
+        if millions:
+            parts.append(under_1000_en(millions) + (" million" if millions == 1 else " million"))
+        if thousands:
+            parts.append(under_1000_en(thousands) + " thousand")
+        if rest:
+            parts.append(under_1000_en(rest))
+        return " ".join(parts)
+
+    prefix = "minus " if amount < 0 else ""
+    euro_word = "euro" if euros == 1 else "euros"
+    cent_word = "cent" if cents == 1 else "cents"
+
+    if cents == 0:
+        text = f"{prefix}{int_words_en(euros)} {euro_word}"
+    else:
+        text = f"{prefix}{int_words_en(euros)} {euro_word} and {int_words_en(cents)} {cent_word}"
+
+    return text[:1].upper() + text[1:]
+
+
 # -------------------------
 # OpenAI vision extraction
 # -------------------------
@@ -450,7 +504,7 @@ def fill_pdf(template_path, field_values):
         writer.update_page_form_field_values(
             page,
             field_values,
-            auto_regenerate=True,
+            auto_regenerate=False,
         )
 
     # Ξανά αφαίρεση actions μετά τη συμπλήρωση, για σιγουριά
@@ -497,7 +551,10 @@ def build_invoice_fields(data, business, options):
     )
 
     # Το amount_in_words γράφεται αποκλειστικά από Python, όχι από το PDF JavaScript.
-    words = amount_words_gr(payable)
+    if options.get("pdf_language") == "English":
+        words = amount_words_en(payable)
+    else:
+        words = amount_words_gr(payable)
 
     return {
         "business_name": business.get("name", ""),
@@ -558,7 +615,7 @@ def build_invoice_fields(data, business, options):
         "total_amount": fmt_eur(payable),
         "payable_amount": fmt_eur(payable),
 
-        "payment_method": "Πλατφόρμα Booking.com",
+        "payment_method": "Booking.com platform" if options.get("pdf_language") == "English" else "Πλατφόρμα Booking.com",
         "issuer_signature": "",
         "customer_signature": "",
         "business_stamp": "",
@@ -660,6 +717,12 @@ with st.sidebar:
     vat_rate = st.text_input(
         "Φ.Π.Α. %",
         "0",
+    )
+
+    pdf_language = st.selectbox(
+        "Γλώσσα PDF / PDF language",
+        ["Ελληνικά", "English"],
+        index=0,
     )
 
     st.divider()
@@ -826,6 +889,7 @@ options = {
     "document_number": document_number,
     "document_date": document_date,
     "notes": notes,
+    "pdf_language": pdf_language,
 }
 
 
@@ -881,6 +945,16 @@ with st.expander("Προχωρημένο: άλλο PDF template"):
 
 
 template_path = DEFAULT_TEMPLATE
+
+if pdf_language == "English":
+    english_template = APP_DIR / "template_invoice_en.pdf"
+    if english_template.exists():
+        template_path = english_template
+    else:
+        st.warning(
+            "Έχεις επιλέξει English, αλλά δεν υπάρχει ακόμα template_invoice_en.pdf στο GitHub. "
+            "Θα χρησιμοποιηθεί προσωρινά το ελληνικό template_invoice.pdf."
+        )
 
 if template_upload:
     temp_path = APP_DIR / "uploaded_template.pdf"

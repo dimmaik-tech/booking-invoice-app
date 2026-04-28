@@ -513,7 +513,7 @@ PDF_FONT_BOLD = register_font_safe(
 
     def draw_fit_text(c, x, y, w, h, text, size=7.0, bold=False, center=False, color=colors.black):
         text = "" if text is None else str(text)
-        font = "DejaVu-Bold" if bold else "DejaVu"
+        font = PDF_FONT_BOLD if bold else PDF_FONT_REGULAR
 
         # Reduce font size until it fits the field width
         fs = float(size)

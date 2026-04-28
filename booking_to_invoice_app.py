@@ -442,51 +442,46 @@ def remove_pdf_javascript_and_actions(obj, seen=None):
 
 def fill_pdf(template_path, field_values):
     """
-    Stable PDF output: δεν γεμίζει τα AcroForm fields με pypdf.
-    Αντίθετα, γράφει τα στοιχεία σαν κανονικό κείμενο πάνω στο template με DejaVu font
-    και αφαιρεί τα fillable fields από το τελικό PDF.
-
-    Έτσι αποφεύγουμε τα χαλασμένα ελληνικά / σύμβολα στα form fields.
-    Το τελικό PDF είναι σταθερό για αποστολή/εκτύπωση, αλλά δεν είναι fillable.
+    Stable PDF output: γράφει τα στοιχεία σαν κανονικό κείμενο πάνω στο template
+    με fallback γραμματοσειρά και αφαιρεί τα fillable fields από το τελικό PDF.
     """
     reader = PdfReader(str(template_path))
     writer = PdfWriter()
 
     # Register Greek-safe font with fallback
-def register_font_safe(font_name, possible_paths, fallback_name):
-    for path in possible_paths:
-        try:
-            if Path(path).exists():
-                pdfmetrics.registerFont(TTFont(font_name, path))
-                return font_name
-        except Exception:
-            pass
-    return fallback_name
+    def register_font_safe(font_name, possible_paths, fallback_name):
+        for path in possible_paths:
+            try:
+                if Path(path).exists():
+                    pdfmetrics.registerFont(TTFont(font_name, path))
+                    return font_name
+            except Exception:
+                pass
+        return fallback_name
 
+    PDF_FONT_REGULAR = register_font_safe(
+        "DejaVu",
+        [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+            "/usr/local/share/fonts/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+        ],
+        "Helvetica",
+    )
 
-PDF_FONT_REGULAR = register_font_safe(
-    "DejaVu",
-    [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-        "/usr/local/share/fonts/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
-    ],
-    "Helvetica",
-)
-
-PDF_FONT_BOLD = register_font_safe(
-    "DejaVu-Bold",
-    [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/local/share/fonts/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
-    ],
-    PDF_FONT_REGULAR,
-)
+    PDF_FONT_BOLD = register_font_safe(
+        "DejaVu-Bold",
+        [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/local/share/fonts/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+        ],
+        PDF_FONT_REGULAR,
+    )
 
     def get_field_rects(page):
         rects = {}
@@ -515,7 +510,6 @@ PDF_FONT_BOLD = register_font_safe(
         text = "" if text is None else str(text)
         font = PDF_FONT_BOLD if bold else PDF_FONT_REGULAR
 
-        # Reduce font size until it fits the field width
         fs = float(size)
         max_width = max(w - 4, 5)
         try:
@@ -571,7 +565,7 @@ PDF_FONT_BOLD = register_font_safe(
         "net_amount", "stamp_duty", "vat_amount", "total_amount", "payable_amount",
     }
 
-    for page_index, page in enumerate(reader.pages):
+    for page in reader.pages:
         page_width = float(page.mediabox.width)
         page_height = float(page.mediabox.height)
         rects = get_field_rects(page)
@@ -588,7 +582,6 @@ PDF_FONT_BOLD = register_font_safe(
 
             value = field_values.get(name, "")
 
-            # Cover the original widget appearance and redraw stable field background
             c.setFillColor(field_style(name))
             c.setStrokeColor(colors.HexColor("#8FA9C3"))
             c.setLineWidth(0.5)
@@ -620,20 +613,16 @@ PDF_FONT_BOLD = register_font_safe(
         overlay_buffer.seek(0)
         overlay_pdf = PdfReader(overlay_buffer)
 
-        # Merge stable text overlay on top of template
-        base_page = page
-        base_page.merge_page(overlay_pdf.pages[0])
+        page.merge_page(overlay_pdf.pages[0])
 
-        # Remove interactive form widgets from final PDF to avoid browser/Acrobat font bugs
         try:
-            if "/Annots" in base_page:
-                del base_page[NameObject("/Annots")]
+            if "/Annots" in page:
+                del page[NameObject("/Annots")]
         except Exception:
             pass
 
-        writer.add_page(base_page)
+        writer.add_page(page)
 
-    # Do not copy AcroForm; final PDF is flattened/stable
     try:
         if "/AcroForm" in writer._root_object:
             del writer._root_object[NameObject("/AcroForm")]

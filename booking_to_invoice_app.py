@@ -520,7 +520,7 @@ with st.sidebar:
     business = {
         "name": st.text_input(
             "Επωνυμία",
-            "Spacious Beachfront Prop (maisonette)",
+            "Spacious Beachfront Property (maisonette)",
         ),
         "address": st.text_input(
             "Διεύθυνση",
@@ -532,7 +532,7 @@ with st.sidebar:
         ),
         "email": st.text_input(
             "Email",
-            "dimmaik@gmail.com",
+            "dimlebesis72@yahoo.gr",
         ),
         "afm": st.text_input(
             "Α.Φ.Μ.",

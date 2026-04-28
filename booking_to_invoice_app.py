@@ -354,10 +354,32 @@ def fill_pdf(template_path, field_values):
     for page in reader.pages:
         writer.add_page(page)
 
+    # Κρατάμε τη φόρμα, αλλά αφαιρούμε παλιά JavaScript/calculations από το PDF template
     if "/AcroForm" in reader.trailer["/Root"]:
+        acroform = reader.trailer["/Root"]["/AcroForm"]
+
+        # Αφαίρεση calculation order, γιατί μπορεί να ξαναϋπολογίζει το ποσό ολογράφως λάθος
+        try:
+            if "/CO" in acroform:
+                del acroform["/CO"]
+        except Exception:
+            pass
+
+        # Αφαίρεση JavaScript actions από όλα τα πεδία
+        try:
+            fields = acroform.get("/Fields", [])
+            for field_ref in fields:
+                field = field_ref.get_object()
+                if "/AA" in field:
+                    del field["/AA"]
+                if "/A" in field:
+                    del field["/A"]
+        except Exception:
+            pass
+
         writer._root_object.update(
             {
-                NameObject("/AcroForm"): reader.trailer["/Root"]["/AcroForm"]
+                NameObject("/AcroForm"): acroform
             }
         )
 
@@ -367,6 +389,22 @@ def fill_pdf(template_path, field_values):
             NameObject("/NeedAppearances")
         ] = BooleanObject(True)
 
+    # Αφαίρεση document-level JavaScript / OpenAction
+    try:
+        if "/OpenAction" in writer._root_object:
+            del writer._root_object["/OpenAction"]
+    except Exception:
+        pass
+
+    try:
+        if "/Names" in writer._root_object:
+            names = writer._root_object["/Names"]
+            if "/JavaScript" in names:
+                del names["/JavaScript"]
+    except Exception:
+        pass
+
+    # Συμπλήρωση πεδίων από Python
     for page in writer.pages:
         writer.update_page_form_field_values(
             page,

@@ -10,7 +10,7 @@ from pathlib import Path
 import streamlit as st
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
-from pypdf.generic import NameObject, BooleanObject
+from pypdf.generic import NameObject, BooleanObject, DictionaryObject, ArrayObject
 
 try:
     from openai import OpenAI
@@ -49,8 +49,6 @@ def parse_amount(value):
             s = s.replace(",", "")
 
     elif "," in s:
-        # If comma is decimal separator with 2 digits, use decimal,
-        # otherwise treat comma as thousand separator.
         parts = s.split(",")
         if len(parts[-1]) == 2:
             s = s.replace(",", ".")
@@ -246,6 +244,7 @@ def int_words(n):
         if thousands == 1:
             parts.append("χίλια")
         else:
+            # Χιλιάδες = θηλυκό γένος: δεκατρείς χιλιάδες, είκοσι τρεις χιλιάδες
             parts.append(under_1000(thousands, female=True) + " χιλιάδες")
 
     if rest:
@@ -344,8 +343,44 @@ Rules:
 
 
 # -------------------------
-# PDF fill
+# PDF helpers
 # -------------------------
+
+def remove_pdf_javascript_and_actions(obj, seen=None):
+    """
+    Αφαιρεί JavaScript/actions από PDF objects, ώστε το παλιό template να μη ξαναγράφει
+    λάθος το ποσό ολογράφως, π.χ. 'δεκατρία χιλιάδες'.
+    """
+    if seen is None:
+        seen = set()
+
+    try:
+        obj_id = id(obj)
+        if obj_id in seen:
+            return
+        seen.add(obj_id)
+
+        if hasattr(obj, "get_object"):
+            obj = obj.get_object()
+
+        if isinstance(obj, DictionaryObject):
+            for key in ["/AA", "/A", "/OpenAction", "/JS", "/JavaScript"]:
+                try:
+                    if key in obj:
+                        del obj[NameObject(key)]
+                except Exception:
+                    pass
+
+            for value in list(obj.values()):
+                remove_pdf_javascript_and_actions(value, seen)
+
+        elif isinstance(obj, ArrayObject):
+            for value in obj:
+                remove_pdf_javascript_and_actions(value, seen)
+
+    except Exception:
+        pass
+
 
 def fill_pdf(template_path, field_values):
     reader = PdfReader(str(template_path))
@@ -354,55 +389,61 @@ def fill_pdf(template_path, field_values):
     for page in reader.pages:
         writer.add_page(page)
 
-    # Κρατάμε τη φόρμα, αλλά αφαιρούμε παλιά JavaScript/calculations από το PDF template
+    # Κρατάμε τη φόρμα, αλλά αφαιρούμε όλα τα παλιά JavaScript/actions του PDF template.
     if "/AcroForm" in reader.trailer["/Root"]:
         acroform = reader.trailer["/Root"]["/AcroForm"]
 
-        # Αφαίρεση calculation order, γιατί μπορεί να ξαναϋπολογίζει το ποσό ολογράφως λάθος
         try:
-            if "/CO" in acroform:
-                del acroform["/CO"]
+            acroform_obj = acroform.get_object()
+        except Exception:
+            acroform_obj = acroform
+
+        # Αφαίρεση calculation order
+        try:
+            if "/CO" in acroform_obj:
+                del acroform_obj[NameObject("/CO")]
         except Exception:
             pass
 
-        # Αφαίρεση JavaScript actions από όλα τα πεδία
-        try:
-            fields = acroform.get("/Fields", [])
-            for field_ref in fields:
-                field = field_ref.get_object()
-                if "/AA" in field:
-                    del field["/AA"]
-                if "/A" in field:
-                    del field["/A"]
-        except Exception:
-            pass
+        # Αφαίρεση actions από όλα τα πεδία, ακόμα και nested Kids
+        remove_pdf_javascript_and_actions(acroform_obj)
 
-        writer._root_object.update(
-            {
-                NameObject("/AcroForm"): acroform
-            }
-        )
-
+        writer._root_object.update({NameObject("/AcroForm"): acroform})
         writer.set_need_appearances_writer(True)
 
-        writer._root_object[NameObject("/AcroForm")][
-            NameObject("/NeedAppearances")
-        ] = BooleanObject(True)
+        try:
+            writer._root_object[NameObject("/AcroForm")][NameObject("/NeedAppearances")] = BooleanObject(True)
+        except Exception:
+            pass
 
-    # Αφαίρεση document-level JavaScript / OpenAction
+    # Αφαίρεση document-level OpenAction και JavaScript Names
     try:
         if "/OpenAction" in writer._root_object:
-            del writer._root_object["/OpenAction"]
+            del writer._root_object[NameObject("/OpenAction")]
     except Exception:
         pass
 
     try:
         if "/Names" in writer._root_object:
-            names = writer._root_object["/Names"]
-            if "/JavaScript" in names:
-                del names["/JavaScript"]
+            names_obj = writer._root_object["/Names"]
+            if hasattr(names_obj, "get_object"):
+                names_obj = names_obj.get_object()
+            if "/JavaScript" in names_obj:
+                del names_obj[NameObject("/JavaScript")]
     except Exception:
         pass
+
+    # Αφαίρεση actions από annotations/widgets σε κάθε σελίδα
+    for page in writer.pages:
+        try:
+            if "/Annots" in page:
+                for annot_ref in page["/Annots"]:
+                    annot = annot_ref.get_object()
+                    for key in ["/AA", "/A", "/JS", "/JavaScript"]:
+                        if key in annot:
+                            del annot[NameObject(key)]
+        except Exception:
+            pass
 
     # Συμπλήρωση πεδίων από Python
     for page in writer.pages:
@@ -411,6 +452,9 @@ def fill_pdf(template_path, field_values):
             field_values,
             auto_regenerate=True,
         )
+
+    # Ξανά αφαίρεση actions μετά τη συμπλήρωση, για σιγουριά
+    remove_pdf_javascript_and_actions(writer._root_object)
 
     out = io.BytesIO()
     writer.write(out)
@@ -451,6 +495,9 @@ def build_invoice_fields(data, business, options):
     booking_ref = options.get("booking_ref") or (
         f"Booking.com reservation no. {data.get('booking_number', '')}"
     )
+
+    # Το amount_in_words γράφεται αποκλειστικά από Python, όχι από το PDF JavaScript.
+    words = amount_words_gr(payable)
 
     return {
         "business_name": business.get("name", ""),
@@ -501,7 +548,7 @@ def build_invoice_fields(data, business, options):
         "notes": options.get("notes", ""),
         "booking_ref": booking_ref,
 
-        "amount_in_words": amount_words_gr(payable),
+        "amount_in_words": words,
 
         "net_amount": fmt_eur(net),
         "stamp_rate": fmt_rate(stamp_rate),

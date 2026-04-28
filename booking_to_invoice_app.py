@@ -450,7 +450,7 @@ def fill_pdf(template_path, field_values):
         writer.update_page_form_field_values(
             page,
             field_values,
-            auto_regenerate=True,
+            auto_regenerate=False,
         )
 
     # Ξανά αφαίρεση actions μετά τη συμπλήρωση, για σιγουριά

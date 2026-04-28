@@ -150,12 +150,25 @@ def under_1000(n, female=False):
         "εννέα",
     ]
 
-    teens = [
+    teens_m = [
         "δέκα",
         "έντεκα",
         "δώδεκα",
         "δεκατρία",
         "δεκατέσσερα",
+        "δεκαπέντε",
+        "δεκαέξι",
+        "δεκαεπτά",
+        "δεκαοκτώ",
+        "δεκαεννέα",
+    ]
+
+    teens_f = [
+        "δέκα",
+        "έντεκα",
+        "δώδεκα",
+        "δεκατρείς",
+        "δεκατέσσερις",
         "δεκαπέντε",
         "δεκαέξι",
         "δεκαεπτά",
@@ -190,8 +203,9 @@ def under_1000(n, female=False):
     ]
 
     units = units_f if female else units_m
-    parts = []
+    teens = teens_f if female else teens_m
 
+    parts = []
     h, r = divmod(int(n), 100)
 
     if h:

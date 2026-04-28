@@ -733,7 +733,7 @@ def build_invoice_fields(data, business, options):
         "total_amount": fmt_eur(payable),
         "payable_amount": fmt_eur(payable),
 
-        "payment_method": "Booking.com platform" if options.get("pdf_language") == "English" else "Πλατφόρμα Booking.com",
+        "payment_method": options.get("payment_method", "Πλατφόρμα Booking.com"),
         "issuer_signature": "",
         "customer_signature": "",
         "business_stamp": "",
@@ -835,6 +835,21 @@ with st.sidebar:
     vat_rate = st.text_input(
         "Φ.Π.Α. %",
         "0",
+    )
+
+    payment_method = st.selectbox(
+        "Τρόπος Πληρωμής",
+        [
+            "Πλατφόρμα Booking.com",
+            "Πλατφόρμα Airbnb",
+            "Πλατφόρμα Vrbo",
+            "Μετρητά",
+            "Τραπεζική κατάθεση",
+            "Κάρτα / POS",
+            "IRIS",
+            "Άλλο",
+        ],
+        index=0,
     )
 
     pdf_language = st.selectbox(
@@ -1008,6 +1023,7 @@ options = {
     "document_date": document_date,
     "notes": notes,
     "pdf_language": pdf_language,
+    "payment_method": payment_method,
 }
 
 

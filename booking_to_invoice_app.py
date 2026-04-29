@@ -579,7 +579,16 @@ def fill_pdf(template_path, field_values):
             y = min(y1, y2)
             w = abs(x2 - x1)
             h = abs(y2 - y1)
-
+        # Μεγαλώνουμε λίγο τα μακριά πεδία στο τελικό PDF
+            if name == "amount_in_words":
+                x = max(x - 6, 0)
+                y = max(y - 2, 0)
+                w = w + 16
+                h = h + 4
+            elif name == "booking_ref":
+                x = max(x - 4, 0)
+                w = w + 10
+                h = h + 2 
             value = field_values.get(name, "")
 
             c.setFillColor(field_style(name))
@@ -588,13 +597,15 @@ def fill_pdf(template_path, field_values):
             c.rect(x, y, w, h, fill=1, stroke=1)
 
             if name == "amount_in_words":
-                draw_fit_text(c, x, y, w, h, value, size=6.2, bold=False, center=False, color=colors.black)
+                draw_fit_text(c, x, y, w, h, value, size=7.4, bold=False, center=False, color=colors.black)
             elif name == "business_name":
                 draw_fit_text(c, x, y, w, h, value, size=15, bold=True, center=False, color=colors.black)
             elif name == "payment_method":
                 draw_fit_text(c, x, y, w, h, value, size=6.0, bold=False, center=False, color=colors.black)
-            elif name in {"booking_ref", "notes"}:
-                draw_fit_text(c, x, y, w, h, value, size=6.0, bold=False, center=False, color=colors.black)
+            elif name == "booking_ref":
+                draw_fit_text(c, x, y, w, h, value, size=7.2, bold=False, center=False, color=colors.black)
+            elif name == "notes":
+                draw_fit_text(c, x, y, w, h, value, size=6.5, bold=False, center=False, color=colors.black)
             else:
                 draw_fit_text(
                     c,

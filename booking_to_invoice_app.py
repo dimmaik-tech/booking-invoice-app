@@ -691,7 +691,7 @@ def build_invoice_fields(data, business, options):
         "business_phone": business.get("phone", ""),
         "business_email": business.get("email", ""),
         "business_afm": business.get("afm", ""),
-        "business_doy": business.get("doy", ""),
+        "business_doy": "KALAMATAS" if options.get("pdf_language") == "English" and business.get("doy", "") == "ΚΑΛΑΜΑΤΑΣ" else business.get("doy", ""),
 
         "series": str(options.get("series", "1")),
         "document_number": str(options.get("document_number", "1")),

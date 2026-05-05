@@ -1017,9 +1017,12 @@ with col5:
     )
 
 
+default_notes_gr = "Αφορά βραχυχρόνια μίσθωση ακινήτου μέσω Booking.com από ιδιώτη εκμισθωτή."
+default_notes_en = "Concerns a short-term property rental via Booking.com by a private lessor."
+
 notes = st.text_input(
     "Αιτιολογία / Παρατηρήσεις",
-    "",
+    default_notes_en if pdf_language == "English" else default_notes_gr,
 )
 
 

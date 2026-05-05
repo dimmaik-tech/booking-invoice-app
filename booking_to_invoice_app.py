@@ -739,8 +739,8 @@ def build_invoice_fields(data, business, options):
         "net_amount": fmt_eur(net),
         "stamp_rate": fmt_rate(stamp_rate),
         "stamp_duty": fmt_eur(stamp),
-        "vat_rate": fmt_rate(vat_rate),
-        "vat_amount": fmt_eur(vat),
+        "vat_rate": "" if vat_rate == 0 else fmt_rate(vat_rate),
+        "vat_amount": "" if vat_rate == 0 else fmt_eur(vat),
         "total_amount": fmt_eur(payable),
         "payable_amount": fmt_eur(payable),
 
